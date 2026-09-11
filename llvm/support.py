@@ -10,6 +10,18 @@ from tracking import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 KINDS = ("function", "global")
+COMPILE_FLAGS = ("-O3", "-fno-vectorize", "-fno-slp-vectorize")
+OPTIMIZATION = " ".join(COMPILE_FLAGS)
+
+
+def compile_flags(vectorized=False):
+    return ("-O3",) if vectorized else COMPILE_FLAGS
+
+
+def corpus_directory(root=ROOT, vectorized=False):
+    return root / "llvm" / ("vectorized" if vectorized else "corpus")
+
+
 STAGES = (
     "ready",
     "extract failed",
@@ -40,14 +52,16 @@ def relative_path(value):
     )
 
 
-def validate(root=ROOT):
+def validate(root=ROOT, *, vectorized=False):
     directory = root / "llvm"
+    corpus = corpus_directory(root, vectorized)
+    flags = list(compile_flags(vectorized))
     config = json.loads((directory / "config.json").read_text())
-    manifest = json.loads((directory / "corpus/manifest.json").read_text())
+    manifest = json.loads((corpus / "manifest.json").read_text())
     if (
         manifest.get("format") != 1
         or manifest.get("source") != config
-        or manifest.get("optimization") != "-O3"
+        or manifest.get("optimization") != " ".join(flags)
     ):
         raise ValueError(
             "LLVM manifest differs from the pinned configuration; regenerate the corpus"
@@ -72,6 +86,9 @@ def validate(root=ROOT):
             raise ValueError("invalid LLVM translation unit")
         if not re.fullmatch(r"[0-9a-f]{64}", unit["sha256"]):
             raise ValueError("invalid LLVM source digest")
+        command = unit.get("command", [])
+        if command[-len(flags)-5:-5] != flags:
+            raise ValueError("LLVM compilation command differs from the pinned optimization flags")
     by_source = {unit["source"]: unit for unit in units}
     chunks = manifest["chunks"]
     identities = {(chunk["source"], chunk["kind"], chunk["symbol"]) for chunk in chunks}
@@ -105,18 +122,18 @@ def validate(root=ROOT):
             if filename in expected:
                 raise ValueError("duplicated LLVM chunk filename")
             expected.add(filename)
-            path = directory / "corpus" / filename
+            path = corpus / filename
             if (
                 path.is_symlink()
-                or not path.resolve().is_relative_to((directory / "corpus").resolve())
+                or not path.resolve().is_relative_to(corpus.resolve())
                 or not path.is_file()
                 or sha256(path) != chunk["sha256"]
             ):
                 raise ValueError(f"LLVM chunk missing or changed: {filename}")
     actual = {
-        p.relative_to(directory / "corpus").as_posix()
+        p.relative_to(corpus).as_posix()
         for folder in ("chunks", "failures")
-        for p in (directory / "corpus" / folder).rglob("*")
+        for p in (corpus / folder).rglob("*")
         if p.is_file() or p.is_symlink()
     }
     if actual != expected:

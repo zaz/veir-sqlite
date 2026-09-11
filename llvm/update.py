@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from llvm.support import KINDS, ROOT, positive, validate
+from llvm.support import KINDS, ROOT, compile_flags, corpus_directory, positive, validate
 from tracking import sha256
 
 LLVM_TOOLS = ("clang", "clang++", "llvm-extract", "llvm-dis")
@@ -121,7 +121,7 @@ def select_units(database, source, config):
     return sorted(units, key=lambda unit: (unit["component"], unit["source"]))
 
 
-def compile_command(entry, tools, destination):
+def compile_command(entry, tools, destination, *, vectorized=False):
     argv = arguments(entry)
     if Path(argv[0]).name in ("ccache", "sccache"):
         argv = argv[1:]
@@ -130,7 +130,7 @@ def compile_command(entry, tools, destination):
     if any(arg.startswith("@") for arg in argv):
         raise ValueError("response files in compile_commands.json are not supported")
     # Remove output/dependency destinations so replay cannot overwrite the native build.
-    # All preprocessor, ABI, target and language flags are retained. O3 is explicit.
+    # Keep preprocessor, ABI, target and language flags; pin optimization and vectorizers.
     flags, index = [], 1
     paired = {"-o", "-MF", "-MT", "-MQ", "-MJ", "--serialize-diagnostics"}
     while index < len(argv):
@@ -141,7 +141,8 @@ def compile_command(entry, tools, destination):
             index += 2
             continue
         if (
-            arg in ("-c", "-MD", "-MMD", "-MP", "-fdiagnostics-color")
+            arg in ("-c", "-MD", "-MMD", "-MP", "-fdiagnostics-color",
+                    "-fvectorize", "-fslp-vectorize", "-fno-vectorize", "-fno-slp-vectorize")
             or re.fullmatch(r"-O(?:[0-3sgz]|fast)", arg)
             or any(arg.startswith(prefix) for prefix in ("-MF", "-MT", "-MQ", "-MJ"))
         ):
@@ -155,7 +156,7 @@ def compile_command(entry, tools, destination):
     return [
         str(compiler),
         *flags,
-        "-O3",
+        *compile_flags(vectorized),
         "-fno-color-diagnostics",
         "-c",
         "-emit-llvm",
@@ -274,12 +275,12 @@ def normalized(value, source, build, work, tools):
     return value
 
 
-def generate_unit(unit, source, build, work, output, tools, timeout):
+def generate_unit(unit, source, build, work, output, tools, timeout, *, vectorized=False):
     relative = unit["source"]
     temporary = work / hashlib.sha256(relative.encode()).hexdigest()[:16]
     temporary.mkdir()
     bitcode = temporary / "source.bc"
-    command = compile_command(unit["entry"], tools, bitcode)
+    command = compile_command(unit["entry"], tools, bitcode, vectorized=vectorized)
     receipt = {
         "source": relative,
         "component": unit["component"],
@@ -374,14 +375,14 @@ def generate_unit(unit, source, build, work, output, tools, timeout):
     return receipt, chunks
 
 
-def replace_corpus(staged_root, root):
-    validate(staged_root)
-    destination = root / "llvm/corpus"
+def replace_corpus(staged_root, root, *, vectorized=False):
+    validate(staged_root, vectorized=vectorized)
+    destination = corpus_directory(root, vectorized)
     previous = staged_root.parent / "previous"
     try:
         if destination.exists():
             destination.rename(previous)
-        (staged_root / "llvm/corpus").rename(destination)
+        corpus_directory(staged_root, vectorized).rename(destination)
     except BaseException:
         if previous.exists() and not destination.exists():
             previous.rename(destination)
@@ -415,7 +416,7 @@ def regenerate(args):
     database = json.loads((build / "compile_commands.json").read_text())
     units = select_units(database, source, config)
     for unit in units:
-        compile_command(unit["entry"], tools, Path("unused.bc"))
+        compile_command(unit["entry"], tools, Path("unused.bc"), vectorized=args.vectorized)
     cache_root = root / ".cache/llvm-tracker"
     cache_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="generate-", dir=cache_root) as temporary:
@@ -423,14 +424,15 @@ def regenerate(args):
         # Stage the entire corpus, including its manifest, before replacing anything.
         staged_root = work / "staged"
         directory = staged_root / "llvm"
-        output = directory / "corpus"
+        output = corpus_directory(staged_root, args.vectorized)
         output.mkdir(parents=True)
         shutil.copyfile(root / "llvm/config.json", directory / "config.json")
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
             generated = list(
                 pool.map(
                     lambda unit: generate_unit(
-                        unit, source, build, work, output, tools, args.timeout
+                        unit, source, build, work, output, tools, args.timeout,
+                        vectorized=args.vectorized
                     ),
                     units,
                 )
@@ -453,7 +455,7 @@ def regenerate(args):
         manifest = {
             "format": 1,
             "source": config,
-            "optimization": "-O3",
+            "optimization": " ".join(compile_flags(args.vectorized)),
             "toolchain": versions,
             "target": next(iter(targets), "unknown (no source compiled)"),
             "build": {
@@ -475,7 +477,7 @@ def regenerate(args):
         (output / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         )
-        replace_corpus(staged_root, root)
+        replace_corpus(staged_root, root, vectorized=args.vectorized)
     print(
         f"Recorded {len(units)} translation units and {len(manifest['chunks'])} symbols."
     )
@@ -483,6 +485,8 @@ def regenerate(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--vectorized", action="store_true",
+                        help="select the secondary plain-O3 corpus with vectorizers enabled")
     parser.add_argument(
         "--llvm-source",
         type=Path,
@@ -521,7 +525,7 @@ def main():
     if args.jobs <= 0:
         parser.error("--jobs must be positive")
     if args.check:
-        manifest = validate()
+        manifest = validate(vectorized=args.vectorized)
         print(
             f"LLVM corpus validated: {len(manifest['translation_units'])} translation units, {len(manifest['chunks'])} symbols."
         )

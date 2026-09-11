@@ -1,10 +1,16 @@
-# Initial corpus toolchain
+# Corpus toolchain
 
-This records the environment used for the initial Demangle corpus, whose
+This records the environment used for the Demangle corpus, compiled with
+`-O3 -fno-vectorize -fno-slp-vectorize`, whose
 [manifest](corpus/manifest.json) has SHA-256
-`742ecbc33d75d2b7564f3ad483a2b739d0343c89fc2bce12d445af50fa4b8754`.
+`88fb4d8258f3b694a06bc90aecae6e274728ddcbee315817767a313e339933a8`.
 Update this record when regenerating with a different toolchain or environment.
 Scoring the committed corpus does not require this environment.
+
+The original corpus with vectorizers enabled is retained in
+[vectorized/manifest.json](vectorized/manifest.json), with SHA-256
+`742ecbc33d75d2b7564f3ad483a2b739d0343c89fc2bce12d445af50fa4b8754`.
+Both variants use the same sources, tools, headers and CMake configuration.
 
 ## Source and host headers
 
@@ -62,8 +68,8 @@ Debian packages above.
 
 The manifest records all six executable hashes, the corpus compilation commands,
 the target, the corpus CMake settings and its generated-header hashes. The
-complete corpus was regenerated twice in the recorded environment with identical
-manifest and chunk hashes. A fresh tool build can have different executable
+corpus was regenerated with both vectorizers disabled and every chunk imported
+and verified by the native MLIR tools. A fresh tool build can have different executable
 hashes, for example because of build paths; compare chunk hashes as well as the
 provenance when checking regeneration on another machine. This record does not
 claim a hermetic or byte-identical rebuild of the tool executables.

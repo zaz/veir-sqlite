@@ -28,6 +28,9 @@ class CorpusFixture(unittest.TestCase):
             "component": "Demangle",
             "sha256": "b" * 64,
             "status": "compiled",
+            "command": ["<clang++>", "<source>/llvm/lib/Demangle/example.cpp",
+                        "-O3", "-fno-vectorize", "-fno-slp-vectorize",
+                        "-fno-color-diagnostics", "-c", "-emit-llvm", "-o", "<work>/source.bc"],
             "diagnostic": "",
             "symbols": {"function": 1, "global": 0},
         }
@@ -45,7 +48,7 @@ class CorpusFixture(unittest.TestCase):
         self.manifest = {
             "format": 1,
             "source": self.config,
-            "optimization": "-O3",
+            "optimization": support.OPTIMIZATION,
             "target": "x86_64-pc-linux-gnu",
             "translation_units": [self.unit],
             "chunks": [self.chunk],
@@ -63,6 +66,33 @@ class CorpusFixture(unittest.TestCase):
 
 class IntegrityTests(CorpusFixture):
     def test_valid_corpus(self):
+        self.assertEqual(support.validate(self.root), self.manifest)
+
+    def test_vectorized_corpus_or_command_requires_regeneration(self):
+        self.manifest["optimization"] = "-O3"
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "pinned configuration"):
+            support.validate(self.root)
+        self.manifest["optimization"] = support.OPTIMIZATION
+        self.unit["command"].remove("-fno-slp-vectorize")
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "optimization flags"):
+            support.validate(self.root)
+
+    def test_variants_have_independent_inventories_and_flags(self):
+        vectorized = self.root / "llvm/vectorized"
+        shutil.copytree(self.corpus, vectorized)
+        manifest = copy.deepcopy(self.manifest)
+        manifest["optimization"] = "-O3"
+        command = manifest["translation_units"][0]["command"]
+        command.remove("-fno-vectorize")
+        command.remove("-fno-slp-vectorize")
+        (vectorized / "manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(support.validate(self.root, vectorized=True), manifest)
+        self.assertEqual(support.validate(self.root), self.manifest)
+        (vectorized / self.chunk["file"]).write_text("changed vectorized chunk")
+        with self.assertRaisesRegex(ValueError, "missing or changed"):
+            support.validate(self.root, vectorized=True)
         self.assertEqual(support.validate(self.root), self.manifest)
 
     def test_changed_pin_requires_regeneration(self):
@@ -150,6 +180,25 @@ class IntegrityTests(CorpusFixture):
         with patch.object(Path, "rename", fail_install):
             with self.assertRaisesRegex(OSError, "simulated rename failure"):
                 update.replace_corpus(staging, self.root)
+        self.assertEqual(support.validate(self.root), self.manifest)
+
+    def test_replacing_vectorized_variant_preserves_primary(self):
+        vectorized = self.root / "llvm/vectorized"
+        shutil.copytree(self.corpus, vectorized)
+        manifest = copy.deepcopy(self.manifest)
+        manifest["optimization"] = "-O3"
+        command = manifest["translation_units"][0]["command"]
+        command.remove("-fno-vectorize")
+        command.remove("-fno-slp-vectorize")
+        (vectorized / "manifest.json").write_text(json.dumps(manifest))
+        staging = self.root / "work/staged"
+        shutil.copytree(self.root / "llvm", staging / "llvm")
+        staged_case = staging / "llvm/vectorized" / self.chunk["file"]
+        staged_case.write_text("new vectorized input")
+        manifest["chunks"][0]["sha256"] = support.sha256(staged_case)
+        (staging / "llvm/vectorized/manifest.json").write_text(json.dumps(manifest))
+        update.replace_corpus(staging, self.root, vectorized=True)
+        self.assertEqual(support.validate(self.root, vectorized=True), manifest)
         self.assertEqual(support.validate(self.root), self.manifest)
 
     def test_invalid_replacement_preserves_previous_corpus(self):
@@ -268,7 +317,8 @@ declare void @external_function()
         entry = {
             "file": "/source tree/a.cpp",
             "command": 'ccache clang++ -DABI=1 -I"/build tree/include" '
-            '-fno-rtti -O2 -MD -MF native.d -MT native.o -o native.o -c "/source tree/a.cpp"',
+            '-fno-rtti -O2 -fvectorize -fslp-vectorize -MD -MF native.d '
+            '-MT native.o -o native.o -c "/source tree/a.cpp"',
         }
         tools = {"clang++": Path("/llvm/bin/clang++")}
         command = update.compile_command(entry, tools, Path("/private/source.bc"))
@@ -279,12 +329,25 @@ declare void @external_function()
             "-fno-rtti",
             "/source tree/a.cpp",
             "-O3",
+            "-fno-vectorize",
+            "-fno-slp-vectorize",
             "-emit-llvm",
         ):
             self.assertIn(arg, command)
-        for arg in ("native.o", "native.d", "-MD", "-MT", "-MF", "-O2"):
+        for arg in ("native.o", "native.d", "-MD", "-MT", "-MF", "-O2",
+                    "-fvectorize", "-fslp-vectorize"):
             self.assertNotIn(arg, command)
         self.assertEqual(command[-2:], ["-o", "/private/source.bc"])
+
+    def test_vectorized_replay_removes_inherited_vectorizer_disabling_flags(self):
+        entry = {"file": "a.cpp", "arguments": ["clang++", "-O0", "-fno-vectorize",
+                 "-fno-slp-vectorize", "-c", "a.cpp", "-o", "native.o"]}
+        command = update.compile_command(entry, {"clang++": Path("clang++")},
+                                         Path("private.bc"), vectorized=True)
+        self.assertIn("-O3", command)
+        self.assertNotIn("-fno-vectorize", command)
+        self.assertNotIn("-fno-slp-vectorize", command)
+        self.assertNotIn("-O0", command)
 
     def test_precompiled_headers_and_response_files_require_explicit_fix(self):
         for command in (
@@ -298,6 +361,15 @@ declare void @external_function()
 
 
 class ReportTests(CorpusFixture):
+    def test_vectorized_report_links_to_its_own_chunks_and_the_primary_report(self):
+        self.manifest["optimization"] = "-O3"
+        self.assertIn("llvm/vectorized/", score.example(self.manifest, self.chunk))
+        verdict = {"status": "passed", "diagnostic": ""}
+        results = {self.chunk["file"]: {"strict": verdict, "permissive": verdict}}
+        report = score.render(self.manifest, results, "a" * 40, "b" * 64, "c" * 64, 30)
+        self.assertIn("vectorization enabled", report)
+        self.assertIn("[primary LLVM tracker](LLVM.md)", report)
+
     def test_separates_import_coverage_from_veir_coverage_and_timeouts(self):
         failed = {
             **self.chunk,

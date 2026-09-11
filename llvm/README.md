@@ -9,6 +9,17 @@ units selected by CMake's `LLVMDemangle` target. This includes the Itanium,
 Microsoft, Rust and D demanglers and the common entry points. It is a bounded
 first C++ workload; these results do not describe all of LLVM.
 
+The primary corpus uses `-O3 -fno-vectorize -fno-slp-vectorize`: both LLVM
+vectorizers are disabled so this tracker measures support for a large C++
+implementation. The original plain-O3 LLVM corpus is retained as a secondary
+tracker in [LLVM_VECTORIZED.md](../LLVM_VECTORIZED.md), with both vectorizers
+enabled. SQLite's smaller vector-operation cases remain in [VECTORS.md](../VECTORS.md).
+
+| LLVM variant | Corpus | Report | Commands |
+|---|---|---|---|
+| Primary, vectorizers disabled | `llvm/corpus/` | `LLVM.md` | Default |
+| Vectorizers enabled | `llvm/vectorized/` | `LLVM_VECTORIZED.md` | Add `--vectorized` |
+
 ## Score the committed corpus
 
 Scoring needs Python 3.10+ and a built `veir-opt`. It needs no LLVM/MLIR tools,
@@ -34,8 +45,8 @@ as part of scoring. These checks do not establish execution correctness or a
 passing LLVM test suite.
 
 The `corpora` workflow validates the corpus and tests on pull requests, pushes to
-main and its ten-minute schedule. It uses one VeIR build to update both `LLVM.md`
-and `VECTORS.md`. Pull requests produce reports and JSON artifacts without
+main and its ten-minute schedule. It uses one VeIR build to update `LLVM.md`,
+`LLVM_VECTORIZED.md` and `VECTORS.md`. Pull requests produce reports and JSON artifacts without
 publishing commits. Changes in support are report data; broken tracking inputs
 or a failed VeIR build fail CI.
 
@@ -81,12 +92,21 @@ compilation flags can all change the inputs. Compare the manifest and corpus
 hashes before comparing scores across generations.
 
 The generator replays the selected entries from `compile_commands.json` with
-`-O3 -c -emit-llvm`. It retains ABI, language, target and preprocessor flags and
-removes dependency-output flags and writes bitcode into private scratch space. It
+`-O3 -fno-vectorize -fno-slp-vectorize -c -emit-llvm` by default, or
+`-O3 -c -emit-llvm` with `--vectorized`. These optimization and
+vectorization settings override the compilation database. It retains ABI,
+language, target and preprocessor flags, removes dependency-output flags and
+writes bitcode into private scratch space. It
 does not modify the LLVM source or native build directory. The manifest records
 source-file hashes, normalized commands, CMake settings and generated-header
 hashes. `<source>`, `<build>`, `<work>` and tool-name placeholders in these records
 stand for the corresponding paths supplied to regeneration.
+
+Pass `--vectorized` to each of `llvm/update.py`, `llvm/update.py --check` and
+`llvm/score.py` to regenerate, validate or score the secondary variant. Its
+default report is `LLVM_VECTORIZED.md`. Each variant has a separate manifest
+and chunk directory; regeneration replaces only the selected variant. CI
+validates and scores both variants against the same VeIR revision.
 
 Generation scratch lives in `.cache/llvm-tracker/`. Source compilation and
 per-symbol extraction/import failures remain in the manifest and the report.
@@ -103,6 +123,8 @@ llvm/corpus/manifest.json                provenance, source and symbol inventory
 llvm/corpus/chunks/<component>/<source>/  checked generic MLIR per symbol
 llvm/corpus/failures/<component>/...      LLVM IR for failed imports, when present
 LLVM.md                                 generated support report
+llvm/vectorized/                         secondary plain-O3 corpus and manifest
+LLVM_VECTORIZED.md                       report with vectorizers enabled
 ```
 
 Every definition in every selected translation unit counts once. A template

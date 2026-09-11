@@ -34,6 +34,7 @@ jobs:
         run: |
           python3 vectors/update.py --check
           python3 llvm/update.py --check
+          python3 llvm/update.py --check --vectorized
           python3 -m unittest discover -s tests
 
       - name: Has VeIR moved?
@@ -46,8 +47,9 @@ jobs:
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
           vectors=$(grep '^| veir |' VECTORS.md | grep -oE '[0-9a-f]{40}' | head -1 || true)
           llvm=$(grep '^| veir |' LLVM.md | grep -oE '[0-9a-f]{40}' | head -1 || true)
+          llvm_vectorized=$(grep '^| veir |' LLVM_VECTORIZED.md | grep -oE '[0-9a-f]{40}' | head -1 || true)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          if [ "$sha" = "$vectors" ] && [ "$sha" = "$llvm" ] && [ "$FORCE" != true ]; then
+          if [ "$sha" = "$vectors" ] && [ "$sha" = "$llvm" ] && [ "$sha" = "$llvm_vectorized" ] && [ "$FORCE" != true ]; then
             echo "stale=false" >> "$GITHUB_OUTPUT"
           else
             echo "stale=true" >> "$GITHUB_OUTPUT"
@@ -74,8 +76,8 @@ jobs:
         run: |
           python3 vectors/score.py --veir ../veir --json-out "$RUNNER_TEMP/vector-results.json"
           python3 llvm/score.py --veir ../veir --json-out "$RUNNER_TEMP/llvm-results.json"
-          cat VECTORS.md >> "$GITHUB_STEP_SUMMARY"
-          cat LLVM.md >> "$GITHUB_STEP_SUMMARY"
+          python3 llvm/score.py --vectorized --veir ../veir --json-out "$RUNNER_TEMP/llvm-vectorized-results.json"
+          cat VECTORS.md LLVM.md LLVM_VECTORIZED.md >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: steps.veir.outputs.stale == 'true'
@@ -84,6 +86,7 @@ jobs:
           path: |
             ${{ runner.temp }}/vector-results.json
             ${{ runner.temp }}/llvm-results.json
+            ${{ runner.temp }}/llvm-vectorized-results.json
 
       - name: Commit refreshed reports
         if: steps.veir.outputs.stale == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -91,8 +94,8 @@ jobs:
         env:
           VEIR_SHA: ${{ steps.veir.outputs.sha }}
         run: |
-          git add VECTORS.md LLVM.md
-          if git diff --cached --quiet -- VECTORS.md LLVM.md; then
+          git add VECTORS.md LLVM.md LLVM_VECTORIZED.md
+          if git diff --cached --quiet -- VECTORS.md LLVM.md LLVM_VECTORIZED.md; then
             exit 0
           fi
           git config user.name "github-actions[bot]"

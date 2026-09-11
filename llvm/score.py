@@ -13,18 +13,18 @@ import sys
 from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from llvm.support import KINDS, ROOT, escape, positive, validate
+from llvm.support import KINDS, ROOT, corpus_directory, escape, positive, validate
 from tracking import roundtrip, sha256
 
 MODES = ("strict", "permissive")
 STATUSES = ("passed", "rejected", "timed out")
 
 
-def score_chunk(chunk, binary, root, timeout):
+def score_chunk(chunk, binary, root, timeout, *, vectorized=False):
     return {
         mode: roundtrip(
             binary,
-            root / "llvm/corpus" / chunk["file"],
+            corpus_directory(root, vectorized) / chunk["file"],
             allow=mode == "permissive",
             timeout=timeout,
         )
@@ -38,7 +38,8 @@ def source_link(manifest, item):
 
 def example(manifest, item):
     if item.get("file"):
-        return f"[example](llvm/corpus/{quote(item['file'])})"
+        directory = "vectorized" if manifest["optimization"] == "-O3" else "corpus"
+        return f"[example](llvm/{directory}/{quote(item['file'])})"
     return f"[source]({source_link(manifest, item)})"
 
 
@@ -52,15 +53,23 @@ def error_group(diagnostic):
 
 
 def render(manifest, results, revision, binary_hash, manifest_hash, timeout):
+    vectorized = manifest["optimization"] == "-O3"
+    directory = "vectorized" if vectorized else "corpus"
+    vectorization = "enabled" if vectorized else "disabled"
     units, chunks = manifest["translation_units"], manifest["chunks"]
     ready = [chunk for chunk in chunks if chunk["status"] == "ready"]
     lines = [
-        "# LLVM source support",
+        "# LLVM source support" + (" with vectorizers enabled" if vectorized else ""),
         "",
-        "LLVM's own C/C++ implementation, compiled at `-O3` and split into one module per "
+        "LLVM's own C/C++ implementation, compiled at `-O3` with loop and SLP vectorization "
+        f"{vectorization} and split into one module per "
         "defined function or global. This corpus currently covers **"
         + ", ".join(escape(component) for component in manifest["source"]["components"])
         + "**.",
+        "",
+        ("The [primary LLVM tracker](LLVM.md) disables both vectorizers."
+         if vectorized else
+         "The build with vectorizers enabled is tracked separately in [LLVM_VECTORIZED.md](LLVM_VECTORIZED.md)."),
         "",
         "These checks measure VeIR parsing, structural verification, printing and reparsing. "
         "They do not establish a working LLVM build or passing LLVM tests. Allowing "
@@ -205,7 +214,7 @@ def render(manifest, results, revision, binary_hash, manifest_hash, timeout):
         lines += [
             "",
             "Diagnostics for every failed source file or symbol are recorded in "
-            "[the manifest](llvm/corpus/manifest.json). Failed imports retain their LLVM IR inputs.",
+            f"[the manifest](llvm/{directory}/manifest.json). Failed imports retain their LLVM IR inputs.",
         ]
     else:
         lines += [
@@ -240,13 +249,15 @@ def render(manifest, results, revision, binary_hash, manifest_hash, timeout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--vectorized", action="store_true",
+                        help="score the secondary corpus with vectorizers enabled")
     parser.add_argument(
         "--veir",
         type=Path,
         default=ROOT.parent / "veir",
         help="clean VeIR checkout with a built veir-opt",
     )
-    parser.add_argument("--out", type=Path, default=ROOT / "LLVM.md")
+    parser.add_argument("--out", type=Path)
     parser.add_argument(
         "--json-out",
         type=Path,
@@ -259,7 +270,9 @@ def main():
     args = parser.parse_args()
     if args.jobs <= 0:
         parser.error("--jobs must be positive")
-    manifest = validate()
+    args.out = args.out or ROOT / ("LLVM_VECTORIZED.md" if args.vectorized else "LLVM.md")
+    manifest = validate(vectorized=args.vectorized)
+    manifest_path = corpus_directory(ROOT, args.vectorized) / "manifest.json"
     veir = args.veir.resolve()
     binary = veir / ".lake/build/bin/veir-opt"
     if not binary.is_file():
@@ -272,26 +285,27 @@ def main():
             "VeIR has tracked changes; use a clean, built revision for reproducible scoring"
         )
     binary_hash = sha256(binary)
-    manifest_hash = sha256(ROOT / "llvm/corpus/manifest.json")
+    manifest_hash = sha256(manifest_path)
     chunks = [chunk for chunk in manifest["chunks"] if chunk["status"] == "ready"]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         results = dict(
             zip(
                 (chunk["file"] for chunk in chunks),
                 pool.map(
-                    lambda chunk: score_chunk(chunk, binary, ROOT, args.timeout), chunks
+                    lambda chunk: score_chunk(chunk, binary, ROOT, args.timeout,
+                                              vectorized=args.vectorized), chunks
                 ),
             )
         )
     # A replaced binary or corpus would otherwise silently mix different runs.
     if (
         sha256(binary) != binary_hash
-        or sha256(ROOT / "llvm/corpus/manifest.json") != manifest_hash
+        or sha256(manifest_path) != manifest_hash
     ):
         parser.error(
             "the binary or corpus changed during scoring; rerun with stable inputs"
         )
-    validate()
+    validate(vectorized=args.vectorized)
     report = render(
         manifest, results, revision, binary_hash, manifest_hash, args.timeout
     )
@@ -301,6 +315,7 @@ def main():
             json.dumps(
                 {
                     "veir": revision,
+                    "vectorizers_enabled": args.vectorized,
                     "binary_sha256": binary_hash,
                     "manifest_sha256": manifest_hash,
                     "timeout": args.timeout,
