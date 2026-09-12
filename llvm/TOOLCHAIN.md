@@ -1,15 +1,15 @@
 # Corpus toolchain
 
-This records the environment used for the Demangle corpus, compiled with
+This records the environment used for the Demangle and Support corpus, compiled with
 `-O3 -fno-vectorize -fno-slp-vectorize`, whose
 [manifest](corpus/manifest.json) has SHA-256
-`88fb4d8258f3b694a06bc90aecae6e274728ddcbee315817767a313e339933a8`.
+`f733e100a1739439b721556aec1774bd44c00976e1625231648779190e97527c`.
 Update this record when regenerating with a different toolchain or environment.
 Scoring the committed corpus does not require this environment.
 
-The original corpus with vectorizers enabled is retained in
+The same components are also compiled with vectorizers enabled in
 [vectorized/manifest.json](vectorized/manifest.json), with SHA-256
-`742ecbc33d75d2b7564f3ad483a2b739d0343c89fc2bce12d445af50fa4b8754`.
+`163017b3cbfa97d0a182a79bb03bff9ab04181f20516f20a635cbc86dc95e205`.
 Both variants use the same sources, tools, headers and CMake configuration.
 
 ## Source and host headers
@@ -59,17 +59,27 @@ cmake -S /path/to/llvm-project/llvm -B /path/to/mlir-build -G Ninja \
   -DLLVM_ENABLE_PROJECTS=mlir \
   -DLLVM_TARGETS_TO_BUILD=Native \
   -DLLVM_ENABLE_ASSERTIONS=OFF
-cmake --build /path/to/mlir-build --target mlir-translate mlir-opt --parallel 2
+cmake --build /path/to/mlir-build --target mlir-translate mlir-opt llvm-tblgen --parallel 2
 ```
 
 Pass `/path/to/mlir-build/bin` as `--mlir-bindir` when regenerating. The corpus
 compiler and extraction tools come from `/usr/lib/llvm-19/bin`, supplied by the
 Debian packages above.
 
+The corpus configuration sets `LLVM_DISABLE_ASSEMBLY_FILES=ON`: Support's
+embedded BLAKE3 library uses portable C, with its assembly and hand-written
+x86 SIMD implementations disabled. The `LLVMSupport` and `LLVMSupportBlake3`
+targets contribute 172 and four translation units respectively. Both variants
+use the same configuration and complete target selection.
+
+The corpus build uses `llvm-tblgen` from the pinned source revision to prepare
+`analysis_gen` and `intrinsics_gen`; generated-header hashes are recorded in
+each manifest. No native Support library build is needed for corpus generation.
+
 The manifest records all six executable hashes, the corpus compilation commands,
-the target, the corpus CMake settings and its generated-header hashes. The
-corpus was regenerated with both vectorizers disabled and every chunk imported
-and verified by the native MLIR tools. A fresh tool build can have different executable
+the target, the corpus CMake settings and its generated-header hashes. Both
+variants were regenerated and every chunk imported and verified by the native
+MLIR tools. A fresh tool build can have different executable
 hashes, for example because of build paths; compare chunk hashes as well as the
 provenance when checking regeneration on another machine. This record does not
 claim a hermetic or byte-identical rebuild of the tool executables.

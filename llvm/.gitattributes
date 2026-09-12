@@ -1,3 +1,6 @@
 corpus/chunks/** linguist-generated=true
 corpus/failures/** linguist-generated=true
 corpus/manifest.json linguist-generated=true
+vectorized/chunks/** linguist-generated=true
+vectorized/failures/** linguist-generated=true
+vectorized/manifest.json linguist-generated=true

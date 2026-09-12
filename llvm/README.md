@@ -4,14 +4,22 @@
 VeIR can parse, structurally verify, print and reparse. The input is LLVM's
 implementation, not LLVM's regression tests or the separate LLVM test-suite.
 
-The initial corpus covers the complete **Demangle** library: all six translation
-units selected by CMake's `LLVMDemangle` target. This includes the Itanium,
-Microsoft, Rust and D demanglers and the common entry points. It is a bounded
-first C++ workload; these results do not describe all of LLVM.
+The corpus covers two complete components of the pinned Linux x86-64 build:
+
+| Component | CMake targets | Translation units |
+|---|---|---:|
+| Demangle | `LLVMDemangle` | 6 |
+| Support | `LLVMSupport`, including embedded `LLVMSupportBlake3` objects | 176 |
+
+Demangle includes the Itanium, Microsoft, Rust and D demanglers. Support adds
+LLVM's utilities for strings, containers, arithmetic, files, processes, hashing
+and other infrastructure. Each component has separate report rows. These results
+describe the selected sources and platform, not all of LLVM or every platform's
+conditional implementation.
 
 The primary corpus uses `-O3 -fno-vectorize -fno-slp-vectorize`: both LLVM
 vectorizers are disabled so this tracker measures support for a large C++
-implementation. The original plain-O3 LLVM corpus is retained as a secondary
+implementation. A plain-O3 corpus of the same components is a secondary
 tracker in [LLVM_VECTORIZED.md](../LLVM_VECTORIZED.md), with both vectorizers
 enabled. SQLite's smaller vector-operation cases remain in [VECTORS.md](../VECTORS.md).
 
@@ -53,12 +61,13 @@ broken tracking inputs or a failed VeIR build fail CI.
 ## Regenerate
 
 [config.json](config.json) pins the LLVM source commit and maps report component
-names to complete CMake targets. Use a clean checkout at that commit and a
+names to complete CMake targets (a string, or a list for embedded object targets).
+Use a clean checkout at that commit and a
 separate Release build directory with precompiled headers disabled. Configuring
 CMake supplies the generated configuration headers and compilation database;
-the initial Demangle corpus needs no native LLVM library build.
+these components need no native LLVM library build.
 
-For the initial Linux x86-64 corpus, configuration used Clang 19.1.7:
+For the Linux x86-64 corpus, configuration used Clang 19.1.7:
 
 ```sh
 cmake -S /path/to/llvm-project/llvm -B /path/to/llvm-corpus-build -G Ninja \
@@ -69,7 +78,11 @@ cmake -S /path/to/llvm-project/llvm -B /path/to/llvm-corpus-build -G Ninja \
   -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
   -DLLVM_ENABLE_PROJECTS= -DLLVM_TARGETS_TO_BUILD=X86 \
   -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
-  -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF
+  -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF \
+  -DLLVM_DISABLE_ASSEMBLY_FILES=ON \
+  -DLLVM_TABLEGEN=/path/to/mlir/bin/llvm-tblgen
+
+cmake --build /path/to/llvm-corpus-build --target analysis_gen intrinsics_gen --parallel 2
 
 python3 llvm/update.py \
   --llvm-source /path/to/llvm-project \
@@ -81,11 +94,17 @@ python3 llvm/score.py --veir ../veir
 ```
 
 `clang`, `clang++`, `llvm-dis` and `llvm-extract` must have matching major versions.
+`llvm-tblgen` must come from the pinned LLVM revision; the command above generates
+analysis and intrinsic headers in advance of selecting components that use them.
+`LLVM_DISABLE_ASSEMBLY_FILES=ON` selects BLAKE3's portable C implementation and
+disables its hand-written x86 SIMD paths. All four `LLVMSupportBlake3` C files are
+included, including files with no emitted definitions on this platform. Both
+corpus variants use this same configuration; their vectorizer flags differ.
 The two MLIR tools must also match each other. The MLIR reader may be newer than
-the compiler: the initial corpus uses Clang/LLVM 19.1.7 and
+the compiler: the corpus uses Clang/LLVM 19.1.7 and
 MLIR 24.0.0git. [TOOLCHAIN.md](TOOLCHAIN.md) records the exact MLIR source
 revision, its build recipe and the host C++ header package versions for the
-initial corpus. Each tool's version and binary digest are recorded in the
+corpus. Each tool's version and binary digest are recorded in the
 manifest. New toolchain combinations must regenerate the entire corpus. LLVM
 revision, compiler, standard-library headers, target, CMake configuration and
 compilation flags can all change the inputs. Compare the manifest and corpus
@@ -137,32 +156,36 @@ The function board retains declarations of referenced globals. Global chunks
 exercise initializers and aliases. An alias chunk also retains its aliasee's
 definition, which LLVM requires. LLVM `ifunc` definitions are inventoried as
 globals; the current extractor has no selector for them, so they are recorded
-as extraction failures if encountered. They do not occur in the initial corpus.
+as extraction failures if encountered. They do not occur in the selected components.
 
 Dynamic-initializer lists such as `llvm.global_ctors` are also a known generator
 limitation. The current extraction does not retain their required constructor
 definitions, and the imported MLIR operation has no `sym_name` for the generic
 symbol-preservation check. Such inputs are recorded as generation failures;
 support for their dependencies and special MLIR representation is needed before
-adding components that contain them. They do not occur in Demangle.
+adding components that contain them. They do not occur in Demangle or Support.
 
 The report distinguishes source compilation, symbol import and VeIR acceptance.
 Unknown symbol counts from failed source compilations are never presented as
 zero missing functions. Blocker counts group the first observed diagnostic;
-fixing it can expose another blocker. The initial major blocker is `llvm.comdat`,
-used by the C++ definitions in this corpus.
+fixing it can expose another blocker.
 
-To extend coverage, add targets such as `"Support": "LLVMSupport"` or
-`"Core": "LLVMCore"` to `config.json`, prepare any generated headers those
+To extend coverage, add targets such as `"Core": "LLVMCore"` to `config.json`,
+prepare any generated headers those
 targets require, and regenerate. These larger targets need more than CMake's
 configuration headers; for example, Core requires TableGen-generated intrinsic
 and analysis headers. A complete native build of the selected targets supplies
 their prerequisites. Newly selected targets must have entries in the compilation
 database; an absent target is an error, never an empty successful component.
 Selection covers translation units compiled directly for each named target.
-Linked dependencies and separate object-library targets must be listed explicitly
-if they are to be tracked too.
+Linked dependencies and embedded object-library targets must be listed explicitly
+if they are to be tracked too. Support includes `LLVMSupportBlake3` in its target
+list because those objects are part of the Support archive. `LLVMSupportLSP` is
+a separate library and is not selected. Receipts identify every source's exact
+CMake target, and validation rejects missing targets even when another target
+in the same component has sources.
 
 Commit the configuration, the whole corpus directory and the refreshed report
 together. Update [TOOLCHAIN.md](TOOLCHAIN.md) to describe the environment used for
-regeneration. LLVM-derived files are covered by [LLVM's license](LICENSE.TXT).
+regeneration. See [LLVM's license](LICENSE.TXT) and the
+[additional upstream notices](THIRD_PARTY_NOTICES.txt) for bundled sources.

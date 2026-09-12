@@ -1,6 +1,7 @@
 """Inventory and integrity checks for LLVM's compiled source corpus."""
 
 import argparse
+from collections import Counter
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -52,6 +53,31 @@ def relative_path(value):
     )
 
 
+def component_targets(config):
+    """Include object libraries embedded in a component, without following links."""
+    components = config.get("components")
+    if not isinstance(components, dict) or not components:
+        raise ValueError("invalid LLVM component selection")
+    result, seen = {}, set()
+    for component, selection in components.items():
+        targets = [selection] if isinstance(selection, str) else selection
+        if (
+            not isinstance(component, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", component)
+            or not isinstance(targets, list)
+            or not targets
+            or any(not isinstance(target, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]+", target
+            ) for target in targets)
+        ):
+            raise ValueError("invalid LLVM component targets")
+        if len(set(targets)) != len(targets) or seen.intersection(targets):
+            raise ValueError("duplicated LLVM component target")
+        result[component] = targets
+        seen.update(targets)
+    return result
+
+
 def validate(root=ROOT, *, vectorized=False):
     directory = root / "llvm"
     corpus = corpus_directory(root, vectorized)
@@ -71,13 +97,21 @@ def validate(root=ROOT, *, vectorized=False):
         or not config["components"]
     ):
         raise ValueError("invalid pinned LLVM revision or component selection")
+    targets = component_targets(config)
     units = manifest["translation_units"]
     sources = {unit["source"] for unit in units}
     if not units or len(sources) != len(units):
         raise ValueError("LLVM translation units are empty or duplicated")
     if {unit["component"] for unit in units} != set(config["components"]):
         raise ValueError("LLVM component inventory is incomplete")
+    actual_targets = {component: set() for component in targets}
     for unit in units:
+        selected = targets[unit["component"]]
+        # Older single-target receipts predate the explicit CMake target field.
+        target = unit.get("cmake_target", selected[0] if len(selected) == 1 else None)
+        if target not in selected:
+            raise ValueError("invalid or missing LLVM CMake target receipt")
+        actual_targets[unit["component"]].add(target)
         if not relative_path(unit["source"]) or unit["status"] not in (
             "compiled",
             "compile failed",
@@ -89,6 +123,9 @@ def validate(root=ROOT, *, vectorized=False):
         command = unit.get("command", [])
         if command[-len(flags)-5:-5] != flags:
             raise ValueError("LLVM compilation command differs from the pinned optimization flags")
+    if any(actual_targets[component] != set(selected)
+           for component, selected in targets.items()):
+        raise ValueError("LLVM CMake target inventory is incomplete")
     by_source = {unit["source"]: unit for unit in units}
     chunks = manifest["chunks"]
     identities = {(chunk["source"], chunk["kind"], chunk["symbol"]) for chunk in chunks}
@@ -138,10 +175,10 @@ def validate(root=ROOT, *, vectorized=False):
     }
     if actual != expected:
         raise ValueError("LLVM chunks are missing or unexpected")
+    counts = Counter((chunk["source"], chunk["kind"]) for chunk in chunks)
     for unit in units:
-        selected = [chunk for chunk in chunks if chunk["source"] == unit["source"]]
         if unit["symbols"] != {
-            kind: sum(chunk["kind"] == kind for chunk in selected) for kind in KINDS
+            kind: counts[unit["source"], kind] for kind in KINDS
         }:
             raise ValueError(f"LLVM symbol inventory is incomplete: {unit['source']}")
     return manifest

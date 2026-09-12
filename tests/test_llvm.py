@@ -131,6 +131,27 @@ class IntegrityTests(CorpusFixture):
         with self.assertRaisesRegex(ValueError, "translation units.*empty"):
             support.validate(self.root)
 
+    def test_bundled_target_requires_explicit_and_complete_receipts(self):
+        self.config["components"]["Demangle"] = ["LLVMDemangle", "BundledObjects"]
+        (self.root / "llvm/config.json").write_text(json.dumps(self.config))
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "missing LLVM CMake target receipt"):
+            support.validate(self.root)
+        self.unit["cmake_target"] = "LLVMDemangle"
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "CMake target inventory is incomplete"):
+            support.validate(self.root)
+        bundled = copy.deepcopy(self.unit)
+        bundled.update(source="llvm/lib/Demangle/bundled.c",
+                       cmake_target="BundledObjects", symbols=dict.fromkeys(support.KINDS, 0))
+        self.manifest["translation_units"].append(bundled)
+        self.write_manifest()
+        self.assertEqual(support.validate(self.root), self.manifest)
+        bundled["cmake_target"] = "UnselectedTarget"
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "invalid or missing LLVM CMake target"):
+            support.validate(self.root)
+
     def test_unsafe_paths_and_symlinks_are_rejected(self):
         for name in ("../outside.mlir", "/outside.mlir", "chunks/../outside.mlir"):
             with self.subTest(name=name):
@@ -300,6 +321,7 @@ declare void @external_function()
             for target, name in (
                 ("LLVMSupport", "a"),
                 ("LLVMSupport", "b"),
+                ("LLVMSupportBlake3", "blake3"),
                 ("LLVMSupportLSP", "c"),
             )
         ]
@@ -312,6 +334,25 @@ declare void @external_function()
         )
         with self.assertRaisesRegex(ValueError, "no translation units"):
             update.select_units(database, source, {"components": {"Core": "LLVMCore"}})
+        config = {"components": {"Support": ["LLVMSupport", "LLVMSupportBlake3"]}}
+        selected = update.select_units(database, source, config)
+        self.assertEqual(len(selected), 3)
+        self.assertEqual({unit["component"] for unit in selected}, {"Support"})
+        self.assertEqual({unit["cmake_target"] for unit in selected},
+                         {"LLVMSupport", "LLVMSupportBlake3"})
+        config["components"]["Support"].append("MissingObjects")
+        with self.assertRaisesRegex(ValueError, "MissingObjects has no translation units"):
+            update.select_units(database, source, config)
+
+    def test_invalid_or_duplicate_component_targets_are_rejected(self):
+        for components in (
+            {}, {"Support": []}, {"Support": [""]}, {"Support": [1]},
+            {"../Support": "LLVMSupport"}, {"Support": "../LLVMSupport"},
+            {"Support": ["LLVMSupport", "LLVMSupport"]},
+            {"Support": "LLVMSupport", "Other": ["LLVMSupport"]},
+        ):
+            with self.subTest(components=components), self.assertRaises(ValueError):
+                support.component_targets({"components": components})
 
     def test_replay_preserves_abi_flags_without_overwriting_native_outputs(self):
         entry = {
@@ -422,6 +463,7 @@ class GenerationTests(unittest.TestCase):
         self.unit = {
             "source": "example.cpp",
             "component": "Demangle",
+            "cmake_target": "LLVMDemangle",
             "entry": {
                 "file": str(self.source / "example.cpp"),
                 "directory": str(self.build),

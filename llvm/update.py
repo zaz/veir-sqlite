@@ -14,7 +14,9 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from llvm.support import KINDS, ROOT, compile_flags, corpus_directory, positive, validate
+from llvm.support import (
+    KINDS, ROOT, compile_flags, component_targets, corpus_directory, positive, validate,
+)
 from tracking import sha256
 
 LLVM_TOOLS = ("clang", "clang++", "llvm-extract", "llvm-dis")
@@ -81,7 +83,12 @@ def arguments(entry):
 def select_units(database, source, config):
     """Select complete CMake targets, including every translation unit in each."""
     units = []
-    for component, target in sorted(config["components"].items()):
+    selections = (
+        (component, target)
+        for component, targets in sorted(component_targets(config).items())
+        for target in targets
+    )
+    for component, target in selections:
         selected = []
         for entry in database:
             output = entry.get("output", "")
@@ -108,6 +115,7 @@ def select_units(database, source, config):
                 {
                     "source": path.relative_to(source).as_posix(),
                     "component": component,
+                    "cmake_target": target,
                     "entry": entry,
                 }
             )
@@ -284,6 +292,7 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
     receipt = {
         "source": relative,
         "component": unit["component"],
+        "cmake_target": unit["cmake_target"],
         "sha256": sha256(source / relative),
         "command": [normalized(arg, source, build, work, tools) for arg in command],
         "symbols": dict.fromkeys(KINDS, 0),
