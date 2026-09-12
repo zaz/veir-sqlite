@@ -1,15 +1,15 @@
 # Corpus toolchain
 
-This records the environment used for the Demangle and Support corpus, compiled with
+This records the environment used for the Demangle, Support and Core corpus, compiled with
 `-O3 -fno-vectorize -fno-slp-vectorize`, whose
 [manifest](corpus/manifest.json) has SHA-256
-`f733e100a1739439b721556aec1774bd44c00976e1625231648779190e97527c`.
+`97ebbe133775c208b95509ff49135d5a54739521e5f135dc6d34ad8d1eecaa25`.
 Update this record when regenerating with a different toolchain or environment.
 Scoring the committed corpus does not require this environment.
 
 The same components are also compiled with vectorizers enabled in
 [vectorized/manifest.json](vectorized/manifest.json), with SHA-256
-`163017b3cbfa97d0a182a79bb03bff9ab04181f20516f20a635cbc86dc95e205`.
+`0f8b24ea8de6d7909015cc93b9030a1332bbafa14e752282c5e4e924ee499c53`.
 Both variants use the same sources, tools, headers and CMake configuration.
 
 ## Source and host headers
@@ -74,7 +74,20 @@ use the same configuration and complete target selection.
 
 The corpus build uses `llvm-tblgen` from the pinned source revision to prepare
 `analysis_gen` and `intrinsics_gen`; generated-header hashes are recorded in
-each manifest. No native Support library build is needed for corpus generation.
+each manifest. Core's 83 translation units require these headers. No native
+LLVM library build is needed for corpus generation.
+
+The extracted symbols are imported as bitcode so LLVM 24's native reader can
+upgrade LLVM 19 encodings, including the multiplication constant expressions in
+five Core functions. Text-only import rejects those expressions. The matching
+LLVM 19 disassembler still checks each extracted definition and provides text
+for any failed-import reproducer.
+Compiler file-prefix maps normalize `__FILE__` strings to `llvm-project/` and
+`llvm-build/`. Both variants record these flags in every translation-unit receipt.
+Clang 19 also embeds source locations in anonymous type names used by two Core
+chunks. Those names retain the source checkout path `/home/user/code/llvm-project`;
+reproducing those chunk hashes requires the same path. The names are preserved
+as emitted by the compiler.
 
 The manifest records all six executable hashes, the corpus compilation commands,
 the target, the corpus CMake settings and its generated-header hashes. Both

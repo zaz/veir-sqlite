@@ -102,7 +102,8 @@ def render(manifest, results, revision, binary_hash, manifest_hash, timeout):
         "Symbol counts cover successfully compiled source files. Each definition in each "
         "translation unit counts once; template instantiations repeated across source files count "
         "separately. Functions retain declarations of referenced globals; the global board exercises "
-        "their initializers and aliases. Alias chunks also retain their aliasee's definition.",
+        "their initializers and aliases. Alias chunks also retain their aliasee's definition. "
+        "Initializer-list chunks retain their referenced definitions as well.",
         "",
         "## VeIR round-trips",
         "",
@@ -239,6 +240,7 @@ def render(manifest, results, revision, binary_hash, manifest_hash, timeout):
         f"| Optimization | `{manifest['optimization']}` |",
         f"| Clang | {escape(manifest['toolchain']['clang++']['version'])} |",
         f"| MLIR import | {escape(manifest['toolchain']['mlir-translate']['version'])} |",
+        f"| LLVM import format | `{manifest.get('import_format', 'text')}` |",
         f"| Corpus manifest SHA256 | `{manifest_hash}` |",
         f"| Timeout | {timeout:g}s per invocation |",
         f"| Scored | {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} |",
@@ -288,15 +290,15 @@ def main():
     manifest_hash = sha256(manifest_path)
     chunks = [chunk for chunk in manifest["chunks"] if chunk["status"] == "ready"]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        results = dict(
-            zip(
-                (chunk["file"] for chunk in chunks),
-                pool.map(
-                    lambda chunk: score_chunk(chunk, binary, ROOT, args.timeout,
-                                              vectorized=args.vectorized), chunks
-                ),
-            )
+        verdicts = pool.map(
+            lambda chunk: score_chunk(chunk, binary, ROOT, args.timeout,
+                                      vectorized=args.vectorized), chunks
         )
+        results = {}
+        for count, (chunk, verdict) in enumerate(zip(chunks, verdicts), 1):
+            results[chunk["file"]] = verdict
+            if count % 1000 == 0:
+                print(f"Scored {count}/{len(chunks)} LLVM chunks.", flush=True)
     # A replaced binary or corpus would otherwise silently mix different runs.
     if (
         sha256(binary) != binary_hash

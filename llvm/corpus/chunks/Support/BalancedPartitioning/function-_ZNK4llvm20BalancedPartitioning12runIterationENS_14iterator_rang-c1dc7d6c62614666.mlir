@@ -61,7 +61,7 @@
     "llvm.br"(%44)[^bb7] : (f32) -> ()
   ^bb6:  // pred: ^bb4
     %45 = "llvm.uitofp"(%40) : (i32) -> f64
-    %46 = "llvm.call"(%45) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %46 = "llvm.call"(%45) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %47 = "llvm.fptrunc"(%46) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%47)[^bb7] : (f32) -> ()
   ^bb7(%48: f32):  // 2 preds: ^bb5, ^bb6
@@ -75,7 +75,7 @@
     "llvm.br"(%53)[^bb10] : (f32) -> ()
   ^bb9:  // pred: ^bb7
     %54 = "llvm.uitofp"(%49) : (i32) -> f64
-    %55 = "llvm.call"(%54) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %55 = "llvm.call"(%54) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %56 = "llvm.fptrunc"(%55) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%56)[^bb10] : (f32) -> ()
   ^bb10(%57: f32):  // 2 preds: ^bb8, ^bb9
@@ -100,7 +100,7 @@
     "llvm.br"(%69)[^bb14] : (f32) -> ()
   ^bb13:  // pred: ^bb11
     %70 = "llvm.uitofp"(%37) : (i32) -> f64
-    %71 = "llvm.call"(%70) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %71 = "llvm.call"(%70) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %72 = "llvm.fptrunc"(%71) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%72)[^bb14] : (f32) -> ()
   ^bb14(%73: f32):  // 2 preds: ^bb12, ^bb13
@@ -114,7 +114,7 @@
     "llvm.br"(%78)[^bb17] : (f32) -> ()
   ^bb16:  // pred: ^bb14
     %79 = "llvm.uitofp"(%74) : (i32) -> f64
-    %80 = "llvm.call"(%79) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %80 = "llvm.call"(%79) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %81 = "llvm.fptrunc"(%80) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%81)[^bb17] : (f32) -> ()
   ^bb17(%82: f32):  // 2 preds: ^bb15, ^bb16
@@ -140,7 +140,7 @@
     "llvm.br"(%94)[^bb22] : (f32) -> ()
   ^bb21:  // pred: ^bb19
     %95 = "llvm.uitofp"(%90) : (i32) -> f64
-    %96 = "llvm.call"(%95) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %96 = "llvm.call"(%95) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %97 = "llvm.fptrunc"(%96) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%97)[^bb22] : (f32) -> ()
   ^bb22(%98: f32):  // 2 preds: ^bb20, ^bb21
@@ -153,7 +153,7 @@
     "llvm.br"(%102)[^bb25] : (f32) -> ()
   ^bb24:  // pred: ^bb22
     %103 = "llvm.uitofp"(%39) : (i32) -> f64
-    %104 = "llvm.call"(%103) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
+    %104 = "llvm.call"(%103) <{CConv = #llvm.cconv<ccc>, TailCallKind = #llvm.tailcallkind<tail>, arg_attrs = [{llvm.noundef}], callee = @log2, fastmathFlags = #llvm.fastmath<none>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, op_bundle_sizes = array<i32>, operandSegmentSizes = array<i32: 1, 0>, res_attrs = [{llvm.noundef}]}> : (f64) -> f64
     %105 = "llvm.fptrunc"(%104) <{fastmathFlags = #llvm.fastmath<none>}> : (f64) -> f32
     "llvm.br"(%105)[^bb25] : (f32) -> ()
   ^bb25(%106: f32):  // 2 preds: ^bb23, ^bb24
@@ -357,7 +357,7 @@
   }) : () -> ()
   "llvm.func"() <{CConv = #llvm.cconv<ccc>, alignment = 2 : i64, arg_attrs = [{llvm.align = 8 : i64, llvm.dereferenceable = 65544 : i64, llvm.nocapture, llvm.nonnull, llvm.noundef, llvm.readonly}, {llvm.align = 8 : i64, llvm.dereferenceable = 56 : i64, llvm.nocapture, llvm.nonnull, llvm.noundef}, {llvm.noundef}, {llvm.noundef}, {llvm.align = 8 : i64, llvm.dereferenceable = 96 : i64, llvm.nocapture, llvm.nonnull, llvm.noundef, llvm.readonly}, {llvm.align = 8 : i64, llvm.dereferenceable = 5000 : i64, llvm.nonnull, llvm.noundef}], dso_local, function_type = !llvm.func<i1 (ptr, ptr, i32, i32, ptr, ptr)>, linkage = #llvm.linkage<external>, no_unwind, passthrough = ["mustprogress", ["min-legal-vector-width", "0"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "x86-64"]], res_attrs = [{llvm.noundef, llvm.zeroext}], sym_name = "_ZNK4llvm20BalancedPartitioning16moveFunctionNodeERNS_14BPFunctionNodeEjjRNS_11SmallVectorINS0_16UtilitySignatureELj4EEERSt23mersenne_twister_engineImLm32ELm624ELm397ELm31ELm2567483615ELm11ELm4294967295ELm7ELm2636928640ELm15ELm4022730752ELm18ELm1812433253EE", target_cpu = "x86-64", target_features = #llvm.target_features<["+cmov", "+cx8", "+fxsr", "+mmx", "+sse", "+sse2", "+x87"]>, tune_cpu = "generic", unnamed_addr = 1 : i64, uwtable_kind = #llvm.uwtableKind<async>, visibility_ = 0 : i64}> ({
   }) : () -> ()
-  "llvm.func"() <{CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noundef}], function_type = !llvm.func<f64 (f64)>, linkage = #llvm.linkage<external>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = write, targetMem1 = write>, no_unwind, passthrough = ["mustprogress", "nofree", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "x86-64"]], sym_name = "log2", target_cpu = "x86-64", target_features = #llvm.target_features<["+cmov", "+cx8", "+fxsr", "+mmx", "+sse", "+sse2", "+x87"]>, tune_cpu = "generic", unnamed_addr = 1 : i64, visibility_ = 0 : i64, will_return}> ({
+  "llvm.func"() <{CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noundef}], function_type = !llvm.func<f64 (f64)>, linkage = #llvm.linkage<external>, memory_effects = #llvm.memory_effects<other = write, argMem = write, inaccessibleMem = write, errnoMem = write, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "x86-64"]], sym_name = "log2", target_cpu = "x86-64", target_features = #llvm.target_features<["+cmov", "+cx8", "+fxsr", "+mmx", "+sse", "+sse2", "+x87"]>, tune_cpu = "generic", unnamed_addr = 1 : i64, visibility_ = 0 : i64, will_return}> ({
   }) : () -> ()
   "llvm.func"() <{CConv = #llvm.cconv<ccc>, allocsize = array<i32: 0>, arg_attrs = [{llvm.noundef}], function_type = !llvm.func<ptr (i64)>, linkage = #llvm.linkage<external>, passthrough = ["nobuiltin", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "x86-64"]], res_attrs = [{llvm.nonnull, llvm.noundef}], sym_name = "_Znwm", target_cpu = "x86-64", target_features = #llvm.target_features<["+cmov", "+cx8", "+fxsr", "+mmx", "+sse", "+sse2", "+x87"]>, tune_cpu = "generic", unnamed_addr = 1 : i64, visibility_ = 0 : i64}> ({
   }) : () -> ()

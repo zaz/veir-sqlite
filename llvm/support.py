@@ -98,6 +98,8 @@ def validate(root=ROOT, *, vectorized=False):
     ):
         raise ValueError("invalid pinned LLVM revision or component selection")
     targets = component_targets(config)
+    if manifest.get("import_format", "text") not in ("text", "bitcode"):
+        raise ValueError("unsupported LLVM import format")
     units = manifest["translation_units"]
     sources = {unit["source"] for unit in units}
     if not units or len(sources) != len(units):

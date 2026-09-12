@@ -68,6 +68,15 @@ class IntegrityTests(CorpusFixture):
     def test_valid_corpus(self):
         self.assertEqual(support.validate(self.root), self.manifest)
 
+    def test_import_format_is_recorded_and_checked(self):
+        self.manifest["import_format"] = "bitcode"
+        self.write_manifest()
+        self.assertEqual(support.validate(self.root), self.manifest)
+        self.manifest["import_format"] = "unknown"
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "unsupported LLVM import format"):
+            support.validate(self.root)
+
     def test_vectorized_corpus_or_command_requires_regeneration(self):
         self.manifest["optimization"] = "-O3"
         self.write_manifest()
@@ -273,11 +282,52 @@ declare void @external_function()
     def test_alias_keeps_aliasee_definition(self):
         module = "@a = alias void (), ptr @b\n@b = alias void (), ptr @f\ndefine void @f() {\n}\n"
         inventory = update.symbols(module)
-        aliases = update.alias_dependencies(module, inventory)
+        aliases = update.definition_dependencies(module, inventory)
         self.assertEqual(
             update.extraction_flags("alias", "a", inventory, aliases),
             ["--alias=a", "--alias=b", "--func=f"],
         )
+
+    def test_initializer_lists_keep_functions_and_associated_alias_definitions(self):
+        module = '''@data = global i32 0
+@data_alias = alias i32, ptr @data
+@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 42, ptr @ctor, ptr @data_alias }]
+@llvm.global_dtors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 43, ptr @dtor, ptr null }]
+define void @ctor() {
+}
+define void @dtor() {
+}
+'''
+        inventory = update.symbols(module)
+        dependencies = update.definition_dependencies(module, inventory)
+        self.assertEqual(set(update.extraction_flags(
+            "global", "llvm.global_ctors", inventory, dependencies
+        )), {"--glob=llvm.global_ctors", "--func=ctor", "--alias=data_alias", "--glob=data"})
+        self.assertEqual(set(update.extraction_flags(
+            "global", "llvm.global_dtors", inventory, dependencies
+        )), {"--glob=llvm.global_dtors", "--func=dtor"})
+        # Ordinary function chunks do not pull in unrelated initializer lists.
+        self.assertEqual(update.extraction_flags("function", "ctor", inventory, dependencies),
+                         ["--func=ctor"])
+
+    def test_initializer_associated_external_data_stays_a_declaration(self):
+        inventory = [("global", "llvm.global_ctors"), ("function", "ctor")]
+        dependencies = {"llvm.global_ctors": ["ctor", "external_data"]}
+        self.assertEqual(set(update.extraction_flags(
+            "global", "llvm.global_ctors", inventory, dependencies
+        )), {"--glob=llvm.global_ctors", "--func=ctor"})
+        with self.assertRaisesRegex(update.ToolError, "points to undefined symbol"):
+            update.extraction_flags("alias", "alias", [("alias", "alias")],
+                                    {"alias": ["missing"]})
+
+    def test_initializer_preservation_requires_the_matching_operation(self):
+        for symbol, operation in update.INITIALIZER_OPS.items():
+            text = f'"builtin.module"() ({{\n  "{operation}"() <{{}}> : () -> ()\n}}) : () -> ()'
+            self.assertTrue(update.retains_symbol(text, symbol))
+            self.assertFalse(update.retains_symbol('"builtin.module"() ({}) : () -> ()', symbol))
+            self.assertFalse(update.retains_symbol(f'sym_name = "{symbol}"', symbol))
+            other = next(name for name in update.INITIALIZER_OPS if name != symbol)
+            self.assertFalse(update.retains_symbol(text, other))
 
     def test_ifunc_without_extractor_support_is_explicit(self):
         with self.assertRaisesRegex(update.ToolError, "no selector for ifunc"):
@@ -389,6 +439,16 @@ declare void @external_function()
         self.assertNotIn("-fno-vectorize", command)
         self.assertNotIn("-fno-slp-vectorize", command)
         self.assertNotIn("-O0", command)
+
+    def test_compiler_normalizes_embedded_source_and_build_paths(self):
+        command = update.compile_command(
+            {"file": "/source tree/a.cpp", "arguments": ["clang++", "-c", "/source tree/a.cpp"]},
+            {"clang++": Path("clang++")}, Path("private.bc"),
+            source=Path("/source tree"), build=Path("/build tree"),
+        )
+        self.assertIn("-ffile-prefix-map=/source tree=llvm-project", command)
+        self.assertIn("-ffile-prefix-map=/build tree=llvm-build", command)
+        self.assertEqual(command[-8:-5], list(support.COMPILE_FLAGS))
 
     def test_precompiled_headers_and_response_files_require_explicit_fix(self):
         for command in (
@@ -503,6 +563,7 @@ class GenerationTests(unittest.TestCase):
             side_effect=[
                 b"",
                 self.module,
+                b"extracted bitcode",
                 self.module,
                 update.ToolError("unsupported import"),
             ],
@@ -515,7 +576,8 @@ class GenerationTests(unittest.TestCase):
     def test_silently_dropped_symbol_is_not_counted_as_success(self):
         with patch(
             "llvm.update.run",
-            side_effect=[b"", self.module, self.module, b"module {}", b"module {}"],
+            side_effect=[b"", self.module, b"extracted bitcode", self.module,
+                         b"module {}", b"module {}"],
         ):
             _, chunks = self.generate()
         self.assertEqual(chunks[0]["status"], "MLIR verification failed")
@@ -527,6 +589,7 @@ class GenerationTests(unittest.TestCase):
             side_effect=[
                 b"",
                 self.module,
+                b"extracted bitcode",
                 self.module,
                 update.ToolError("exceeded 1s", timed_out=True),
             ],
@@ -535,6 +598,20 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(chunks[0]["status"], "timed out")
         self.assertEqual(chunks[0]["stage"], "import failed")
         self.assertTrue((self.output / chunks[0]["file"]).is_file())
+
+    def test_import_uses_bitcode_to_enable_native_llvm_upgrades(self):
+        bitcode = b"BC\xc0\xde"
+        generic = b'"llvm.func"() <{sym_name = "example"}> : () -> ()\n'
+        with patch("llvm.update.run", side_effect=[
+            b"", self.module, bitcode, self.module, b"imported module", generic,
+        ]) as invoke:
+            _, chunks = self.generate()
+        imports = [call for call in invoke.call_args_list
+                   if "--import-llvm" in call.args[0]]
+        self.assertEqual(len(imports), 1)
+        self.assertEqual(imports[0].kwargs["data"], bitcode)
+        self.assertEqual(chunks[0]["status"], "ready")
+        self.assertEqual((self.output / chunks[0]["file"]).read_bytes(), generic)
 
 
 if __name__ == "__main__":

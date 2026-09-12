@@ -22,6 +22,10 @@ from tracking import sha256
 LLVM_TOOLS = ("clang", "clang++", "llvm-extract", "llvm-dis")
 MLIR_TOOLS = ("mlir-translate", "mlir-opt")
 IR_NAME = r'@(?P<name>"(?:[^"\\]|\\[0-9a-fA-F]{2})*"|[-a-zA-Z$._0-9]+)'
+INITIALIZER_OPS = {
+    "llvm.global_ctors": "llvm.mlir.global_ctors",
+    "llvm.global_dtors": "llvm.mlir.global_dtors",
+}
 
 
 class ToolError(RuntimeError):
@@ -129,7 +133,7 @@ def select_units(database, source, config):
     return sorted(units, key=lambda unit: (unit["component"], unit["source"]))
 
 
-def compile_command(entry, tools, destination, *, vectorized=False):
+def compile_command(entry, tools, destination, *, vectorized=False, source=None, build=None):
     argv = arguments(entry)
     if Path(argv[0]).name in ("ccache", "sccache"):
         argv = argv[1:]
@@ -161,6 +165,10 @@ def compile_command(entry, tools, destination, *, vectorized=False):
     compiler = (
         tools["clang"] if Path(entry["file"]).suffix == ".c" else tools["clang++"]
     )
+    # Give __FILE__ and related compiler-generated paths stable, readable names.
+    for path, prefix in ((source, "llvm-project"), (build, "llvm-build")):
+        if path is not None:
+            flags.append(f"-ffile-prefix-map={path}={prefix}")
     return [
         str(compiler),
         *flags,
@@ -218,18 +226,26 @@ def decode_name(symbol):
 
 
 def retains_symbol(text, symbol):
+    if symbol in INITIALIZER_OPS:
+        # These LLVM globals become dedicated operations without a sym_name.
+        return re.search(
+            r'^\s*"' + re.escape(INITIALIZER_OPS[symbol]) + r'"\(\)', text, re.M
+        ) is not None
     return any(
         decode_name(match[1]) == symbol
         for match in re.finditer(r'\bsym_name = ("(?:[^"\\]|\\[0-9a-fA-F]{2})*")', text)
     )
 
 
-def alias_dependencies(module, inventory):
-    aliases = {symbol for form, symbol in inventory if form == "alias"}
+def definition_dependencies(module, inventory):
+    selected = {
+        symbol for form, symbol in inventory
+        if form == "alias" or symbol in INITIALIZER_OPS
+    }
     dependencies = {}
     for line in module.splitlines():
         match = re.match(IR_NAME + r" = (?P<body>.*)", line)
-        if match and decode_name(match["name"]) in aliases:
+        if match and decode_name(match["name"]) in selected:
             dependencies[decode_name(match["name"])] = [
                 decode_name(item["name"])
                 for item in re.finditer(IR_NAME, match["body"])
@@ -237,8 +253,8 @@ def alias_dependencies(module, inventory):
     return dependencies
 
 
-def extraction_flags(form, symbol, inventory, aliases):
-    """An alias must keep its aliasee's definition to remain valid LLVM IR."""
+def extraction_flags(form, symbol, inventory, dependencies):
+    """Keep aliasees and initializer definitions required by LLVM/MLIR verifiers."""
     forms = {name: kind for kind, name in inventory}
     pending, seen, flags = [(form, symbol)], set(), []
     while pending:
@@ -252,12 +268,16 @@ def extraction_flags(form, symbol, inventory, aliases):
         if selector is None:
             raise ToolError(f"llvm-extract has no selector for {kind} definitions")
         flags.append(f"{selector}={name}")
-        if kind == "alias":
-            for dependency in aliases[name]:
+        if kind == "alias" or name in INITIALIZER_OPS:
+            for dependency in dependencies[name]:
                 if dependency not in forms:
-                    raise ToolError(
-                        f"alias {name} points to undefined symbol {dependency}"
-                    )
+                    if kind == "alias":
+                        raise ToolError(
+                            f"alias {name} points to undefined symbol {dependency}"
+                        )
+                    # Associated data may be an external declaration. The MLIR
+                    # verifier still requires constructor/destructor definitions.
+                    continue
                 pending.append((forms[dependency], dependency))
     return flags
 
@@ -288,7 +308,8 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
     temporary = work / hashlib.sha256(relative.encode()).hexdigest()[:16]
     temporary.mkdir()
     bitcode = temporary / "source.bc"
-    command = compile_command(unit["entry"], tools, bitcode, vectorized=vectorized)
+    command = compile_command(unit["entry"], tools, bitcode, vectorized=vectorized,
+                              source=source, build=build)
     receipt = {
         "source": relative,
         "component": unit["component"],
@@ -306,6 +327,7 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
             status="timed out" if error.timed_out else "compile failed",
             diagnostic=normalized(error, source, build, work, tools),
         )
+        print(f"{relative}: {receipt['status']}: {receipt['diagnostic']}", flush=True)
         return receipt, []
     # Failure to enumerate is an infrastructure failure: the denominator is unknown.
     module = run([tools["llvm-dis"], bitcode, "-o", "-"], timeout=timeout).decode()
@@ -314,7 +336,7 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
         raise ValueError(f"compiled source has no target triple: {relative}")
     receipt["target"] = target[1]
     inventory = symbols(module)
-    aliases = alias_dependencies(module, inventory)
+    dependencies = definition_dependencies(module, inventory)
     chunks = []
     for form, symbol in inventory:
         kind = "function" if form == "function" else "global"
@@ -332,10 +354,13 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
         extracted = None
         stage = "extract failed"
         try:
-            flags = extraction_flags(form, symbol, inventory, aliases)
-            extracted = run(
-                [tools["llvm-extract"], *flags, "-S", bitcode, "-o", "-"],
+            flags = extraction_flags(form, symbol, inventory, dependencies)
+            extracted_bitcode = run(
+                [tools["llvm-extract"], *flags, bitcode, "-o", "-"],
                 timeout=timeout,
+            )
+            extracted = run(
+                [tools["llvm-dis"], "-o", "-"], data=extracted_bitcode, timeout=timeout
             )
             # The temporary bitcode path in this comment is not part of the input.
             extracted = re.sub(rb"^; ModuleID = .*\n", b"", extracted)
@@ -344,7 +369,9 @@ def generate_unit(unit, source, build, work, output, tools, timeout, *, vectoriz
             stage = "import failed"
             imported = run(
                 [tools["mlir-translate"], "--import-llvm"],
-                data=extracted,
+                # LLVM's bitcode reader upgrades older encodings, including
+                # constant expressions no longer accepted by its text parser.
+                data=extracted_bitcode,
                 timeout=timeout,
             )
             stage = "MLIR verification failed"
@@ -425,7 +452,8 @@ def regenerate(args):
     database = json.loads((build / "compile_commands.json").read_text())
     units = select_units(database, source, config)
     for unit in units:
-        compile_command(unit["entry"], tools, Path("unused.bc"), vectorized=args.vectorized)
+        compile_command(unit["entry"], tools, Path("unused.bc"), vectorized=args.vectorized,
+                        source=source, build=build)
     cache_root = root / ".cache/llvm-tracker"
     cache_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="generate-", dir=cache_root) as temporary:
@@ -465,6 +493,7 @@ def regenerate(args):
             "format": 1,
             "source": config,
             "optimization": " ".join(compile_flags(args.vectorized)),
+            "import_format": "bitcode",
             "toolchain": versions,
             "target": next(iter(targets), "unknown (no source compiled)"),
             "build": {

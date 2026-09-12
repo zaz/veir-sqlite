@@ -4,18 +4,22 @@
 VeIR can parse, structurally verify, print and reparse. The input is LLVM's
 implementation, not LLVM's regression tests or the separate LLVM test-suite.
 
-The corpus covers two complete components of the pinned Linux x86-64 build:
+The corpus covers three complete components of the pinned Linux x86-64 build:
 
 | Component | CMake targets | Translation units |
 |---|---|---:|
 | Demangle | `LLVMDemangle` | 6 |
 | Support | `LLVMSupport`, including embedded `LLVMSupportBlake3` objects | 176 |
+| Core | `LLVMCore` | 83 |
 
 Demangle includes the Itanium, Microsoft, Rust and D demanglers. Support adds
 LLVM's utilities for strings, containers, arithmetic, files, processes, hashing
-and other infrastructure. Each component has separate report rows. These results
+and other infrastructure. Core adds LLVM's IR implementation: types, values,
+instructions, modules, metadata, verification and related infrastructure.
+Each component has separate report rows. These results
 describe the selected sources and platform, not all of LLVM or every platform's
-conditional implementation.
+conditional implementation. Core's linked dependencies are separate libraries;
+BinaryFormat, Remarks and TargetParser are not selected automatically.
 
 The primary corpus uses `-O3 -fno-vectorize -fno-slp-vectorize`: both LLVM
 vectorizers are disabled so this tracker measures support for a large C++
@@ -64,8 +68,9 @@ broken tracking inputs or a failed VeIR build fail CI.
 names to complete CMake targets (a string, or a list for embedded object targets).
 Use a clean checkout at that commit and a
 separate Release build directory with precompiled headers disabled. Configuring
-CMake supplies the generated configuration headers and compilation database;
-these components need no native LLVM library build.
+CMake supplies the configuration headers and compilation database. Core also
+needs the `analysis_gen` and `intrinsics_gen` TableGen targets built below.
+No native LLVM library build is needed.
 
 For the Linux x86-64 corpus, configuration used Clang 19.1.7:
 
@@ -95,7 +100,7 @@ python3 llvm/score.py --veir ../veir
 
 `clang`, `clang++`, `llvm-dis` and `llvm-extract` must have matching major versions.
 `llvm-tblgen` must come from the pinned LLVM revision; the command above generates
-analysis and intrinsic headers in advance of selecting components that use them.
+the analysis and intrinsic headers needed by Core.
 `LLVM_DISABLE_ASSEMBLY_FILES=ON` selects BLAKE3's portable C implementation and
 disables its hand-written x86 SIMD paths. All four `LLVMSupportBlake3` C files are
 included, including files with no emitted definitions on this platform. Both
@@ -120,6 +125,21 @@ does not modify the LLVM source or native build directory. The manifest records
 source-file hashes, normalized commands, CMake settings and generated-header
 hashes. `<source>`, `<build>`, `<work>` and tool-name placeholders in these records
 stand for the corresponding paths supplied to regeneration.
+Compiler file-prefix maps give embedded `__FILE__` strings stable `llvm-project/`
+and `llvm-build/` prefixes instead of the generating machine's checkout paths.
+Clang 19 still embeds source locations in some anonymous C++ type names. Those
+compiler-generated type names are preserved; [TOOLCHAIN.md](TOOLCHAIN.md) records
+the checkout path needed to reproduce them exactly.
+
+Each symbol is extracted as LLVM bitcode and imported through MLIR's native
+LLVM bitcode reader. This lets LLVM upgrade older encodings; for example, five
+Core functions contain LLVM 19 multiplication constant expressions that LLVM
+24's text parser no longer accepts. The matching `llvm-dis` checks the extracted
+definition inventory and supplies textual IR for any failed-import reproducer.
+The manifest records the import format, and every imported chunk is verified
+and checked for preservation of the selected symbol.
+The bitcode reader also upgrades versioned memory-effect attributes, so some
+existing chunk hashes change even when their source and optimization are unchanged.
 
 Pass `--vectorized` to each of `llvm/update.py`, `llvm/update.py --check` and
 `llvm/score.py` to regenerate, validate or score the secondary variant. Its
@@ -158,24 +178,22 @@ definition, which LLVM requires. LLVM `ifunc` definitions are inventoried as
 globals; the current extractor has no selector for them, so they are recorded
 as extraction failures if encountered. They do not occur in the selected components.
 
-Dynamic-initializer lists such as `llvm.global_ctors` are also a known generator
-limitation. The current extraction does not retain their required constructor
-definitions, and the imported MLIR operation has no `sym_name` for the generic
-symbol-preservation check. Such inputs are recorded as generation failures;
-support for their dependencies and special MLIR representation is needed before
-adding components that contain them. They do not occur in Demangle or Support.
+Initializer lists (`llvm.global_ctors` and `llvm.global_dtors`) retain their
+referenced definitions, including aliasees of any associated data. Their imported
+MLIR operations have no `sym_name`, so preservation is checked using the matching
+`llvm.mlir.global_ctors` or `llvm.mlir.global_dtors` operation. Each list counts
+once as a global chunk; the referenced functions also have their own chunks.
+Core contains 20 constructor lists in this configuration.
 
 The report distinguishes source compilation, symbol import and VeIR acceptance.
 Unknown symbol counts from failed source compilations are never presented as
 zero missing functions. Blocker counts group the first observed diagnostic;
 fixing it can expose another blocker.
 
-To extend coverage, add targets such as `"Core": "LLVMCore"` to `config.json`,
-prepare any generated headers those
-targets require, and regenerate. These larger targets need more than CMake's
-configuration headers; for example, Core requires TableGen-generated intrinsic
-and analysis headers. A complete native build of the selected targets supplies
-their prerequisites. Newly selected targets must have entries in the compilation
+To extend coverage, add complete targets to `config.json`, prepare any generated
+headers those targets require, and regenerate both variants. A complete native
+build of the selected targets also supplies their prerequisites.
+Newly selected targets must have entries in the compilation
 database; an absent target is an error, never an empty successful component.
 Selection covers translation units compiled directly for each named target.
 Linked dependencies and embedded object-library targets must be listed explicitly

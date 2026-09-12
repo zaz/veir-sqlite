@@ -3,6 +3,7 @@
   "revision": "6a2d309c7d204730a9a35f3261f8448efeb6c5e3",
   "components": {
     "Demangle": "LLVMDemangle",
-    "Support": ["LLVMSupport", "LLVMSupportBlake3"]
+    "Support": ["LLVMSupport", "LLVMSupportBlake3"],
+    "Core": "LLVMCore"
   }
 }
