@@ -1,0 +1,10 @@
+# GitHub added concurrency.queue in May 2026; actionlint 1.7.12 predates it.
+# https://github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues/
+# Keep all other syntax, expression and shell checks enabled.
+paths:
+  .github/workflows/corpora.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/leadership.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'

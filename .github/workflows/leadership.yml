@@ -33,18 +33,42 @@ on:
 permissions:
   contents: write
 
-# Runs may score concurrently. publish-reports.py checks fresh main and retries
-# rejected pushes, preserving newer reports and changes to tracking inputs.
+# Different trackers and VeIR revisions may score concurrently. Duplicate polls
+# wait for the same revision's job, then check fresh reports before building.
+# publish-reports.py still handles concurrent publication with normal pushes.
 
 jobs:
+  revision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      sha: ${{ steps.veir.outputs.sha }}
+    steps:
+      - name: Choose VeIR revision
+        id: veir
+        env:
+          VEIR_REPOSITORY: https://github.com/opencompl/veir.git
+        run: |
+          sha=$(git ls-remote "$VEIR_REPOSITORY" refs/heads/main | cut -f1)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   score:
+    needs: revision
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: tracker-${{ github.workflow }}-${{ github.ref }}-${{ needs.revision.outputs.sha }}
+      cancel-in-progress: false
+      # A later poll must not cancel a pending push/PR check or forced rescore.
+      queue: max
     steps:
       - uses: actions/checkout@v4
         with:
           path: veir-sqlite
-          # Delayed events should start from current main.
+          # Resolve main after acquiring the lock, so a waiting poll sees the
+          # previous job's published reports rather than its event's old commit.
           # PRs and non-main runs retain checkout's default event revision.
           ref: ${{ github.ref == 'refs/heads/main' && github.ref || '' }}
 
@@ -54,20 +78,33 @@ jobs:
           python3 update-sqlite.py --verify
           python3 -m unittest discover -s tests -p 'test_sqlite.py'
           python3 -m unittest discover -s tests -p 'test_publish.py'
+          python3 -m unittest discover -s tests -p 'test_workflows.py'
 
       - name: Has veir moved?
         id: veir
         working-directory: veir-sqlite
         env:
+          VEIR_REPOSITORY: https://github.com/opencompl/veir.git
+          PLANNED_VEIR_SHA: ${{ needs.revision.outputs.sha }}
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
           FORCE: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.force == true }}
         run: |
-          sha=$(git ls-remote https://github.com/opencompl/veir.git refs/heads/main | cut -f1)
+          sha=$PLANNED_VEIR_SHA
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$SCHEDULED" = true ]; then
+            latest=$(git ls-remote "$VEIR_REPOSITORY" refs/heads/main | cut -f1)
+            [[ "$latest" =~ ^[0-9a-f]{40}$ ]]
+            if [ "$sha" != "$latest" ]; then
+              echo "VeIR advanced while this poll waited; a fresh poll will score it."
+              echo "stale=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           # The Provenance row names the commit veir was scored at (linked,
           # possibly as tag-N-gCOMMIT); the 40-character hash is the commit.
           scored=$(grep '^| veir |' LEADERSHIP.md | grep -o '[0-9a-f]\{40\}' | head -1)
-          echo "veir main: $sha; scored: ${scored:-none}; force: $FORCE"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "planned veir: $sha; scored: ${scored:-none}; force: $FORCE"
           if [ "$sha" = "$scored" ] && [ "$FORCE" != true ]; then
             echo "LEADERSHIP.md is current; nothing to do."
             echo "stale=false" >> "$GITHUB_OUTPUT"
